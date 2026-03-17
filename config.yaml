@@ -1,0 +1,34 @@
+in_csv: "/media/AntGate/user/jinb/shared/ethogram/all-colonies_filt_sum/dsred_all_filtered_300frame_inout.csv"
+prediction_dir : "/media/AntGate/user/jinb/shared/ethogram/tk_temporalpolyethism_dsred_20250501_115442/"
+output_dir: "/media/AntGate/user/jinb/shared/ethogram/withbuffer_100px"
+start_frame: 660
+stop_frame: 700 # end of 20250501 is 10235
+
+# start_frame: 660
+# stop_frame: 700
+
+mask_buffer_px: 100.0
+
+iou_threshold: 0.1
+conf_threshold: 0.2
+class_thresholds:
+  0: 0.6 # brood
+  1: 0.2 # deadant
+  2: 0.5 # food
+  3: 0.5 # waste         
+batch_size: 10
+clear_mask_after_frame: true
+overlay_colors:  # BGR colors for classes (cycled if needed)
+- [34, 139, 230] # bright azure
+- [237, 102, 99] # coral red
+- [255, 170, 29] # sunflower orange
+- [120, 200, 80] # fresh green
+- [150, 120, 255] # lavender violet
+- [60, 180, 180] # teal cyan
+meta:
+  columns:
+    frame: "frame"
+    adjusted_frame: "adjusted_frame"
+    file_name: "file_name"
+classes_to_process:
+test: True

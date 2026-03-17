@@ -1,0 +1,50 @@
+# ========== PATHS ==========
+paths:
+  # Prediction input folder (JSONL/JSONL.GZ from YOLO)
+  #prediction_dir: "/media/AntGate/user/jinb/shared/ethogram/test_dataset/"
+  prediction_dir: /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264052/model_predictions
+  # prediction_dir: "/media/AntGate/user/jinb/shared/ethogram/tk_temporalpolyethism_dsred_20250506_111918/"
+  # Filtered output folder
+  output_dir: "/media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264052/filter_predictions"
+
+checkpoint: "000030.jsonl.gz"
+
+parallel:
+  enabled: true
+  workers: 8
+  
+# ========== FILTERING PARAMETERS ==========
+mask_buffer_px: 0
+iou_threshold: 0.3
+conf_threshold: 0.1
+
+# Per-class confidence thresholds
+class_thresholds:
+  0: 0.1   # brood
+  1: 0.2   # deadant
+  2: 0.5   # food
+  3: 0.5   # waste
+
+batch_size: 10
+clear_mask_after_frame: true
+
+# ========== CLASSES ==========
+#class_names: ["brood", "deadant", "food", "waste"]
+class_names: ["brood"]
+classes_to_process: [0, 1, 2, 3]
+
+# ========== VISUALIZATION ==========
+overlay_colors:  # BGR colors
+  - [34, 139, 230]  # bright azure
+  - [237, 102, 99]  # coral red
+  - [255, 170, 29]  # sunflower orange
+  - [120, 200, 80]  # fresh green
+  - [150, 120, 255] # lavender violet
+  - [60, 180, 180]  # teal cyan
+
+test:
+  enabled: false                   # enable preview visualization
+  # video_dir: "/media/AntGate/user/jinb/shared/ethogram/test_dataset/"
+  video_dir: "/media/AntGate/user/patrick/shared/sparse_videos/"
+  preview_fps: 10
+  edge_thickness: 3
