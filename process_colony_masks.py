@@ -1,13 +1,9 @@
-import os
 import cv2
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple
 import pickle
-import json
 import argparse
-
-DEBUG = False
 
 class Colony:
     def __init__(self, colony_id: int, polygon_xy: np.ndarray, image_shape: Tuple[int, int, int]):
@@ -37,29 +33,17 @@ class Colony:
 
     @property
     def center(self) -> tuple[int, int]:
-        # Centroid from moments, fallback to bbox
         M = cv2.moments(self.polygon)
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-        else:
-            cx = (self.mask_location['x1'] + self.mask_location['x2']) // 2
-            cy = (self.mask_location['y1'] + self.mask_location['y2']) // 2
+        if M["m00"] == 0:
+            raise ValueError(f"Colony {self.colony_id} has zero polygon area")
+        cx = int(M["m10"] / M["m00"])
+        cy = int(M["m01"] / M["m00"])
         return (cx, cy)
     
-    @staticmethod
-    def load_colonies(colonies_pkl_path: str) -> List["Colony"]:
-        with open(colonies_pkl_path, "rb") as f:
-            colonies = pickle.load(f)
-        return colonies
-
 class ColonyMaker:
-    def __init__(self, width: int | None = None, height: int | None = None,
-                 orientation: str | None = None, use_otsu: bool = True, debug: bool = False):
+    def __init__(self, width: int | None = None, height: int | None = None, debug: bool = False):
         self.W = width
         self.H = height
-        self.orientation = orientation
-        self.use_otsu = use_otsu
         self.debug = debug
 
     @staticmethod
@@ -70,8 +54,7 @@ class ColonyMaker:
             img = cv2.resize(img, (target_w, target_h), interpolation=cv2.INTER_AREA)
         return img
 
-    def detect_colonies(self, image_path: str, info, orientation: str | None = None,
-                        use_otsu: bool | None = None) -> List["Colony"]:
+    def detect_colonies(self, image_path: str, orientation: str, use_otsu: bool) -> List["Colony"]:
         """
         Detect white shapes (colonies) on a black background and save overlays on:
           1) the resized grayscale image
@@ -81,13 +64,10 @@ class ColonyMaker:
         if img_bgr is None:
             raise ValueError(f"Could not read image from {image_path}")
 
-        # Use instance defaults when not passed
-        orientation = self.orientation if orientation is None else orientation
-        use_otsu = self.use_otsu if use_otsu is None else use_otsu
-
-        # Resize to info size (your chosen working coordinate system)
-        W = int(info.get("width", img_bgr.shape[1])) if self.W is None else int(self.W)
-        H = int(info.get("height", img_bgr.shape[0])) if self.H is None else int(self.H)
+        if self.W is None or self.H is None:
+            raise ValueError("Width and height must be provided explicitly")
+        W = int(self.W)
+        H = int(self.H)
         img_bgr = self.load_and_resize_image(img_bgr, W, H)
         img_gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
@@ -111,11 +91,9 @@ class ColonyMaker:
         if orientation == "clockwise":
             colonies = self.sort_colonies_clockwise(colonies, (H, W))
 
-        # Save overlays (both share the same resized coordinates)
-        # 1) On the resized grayscale image
         self.save_labeled_colonies(
             colonies,
-            base_img=img_bgr,  # draw in color
+            base_img=img_bgr,
             base_path=image_path,
             out_name="colonies_labeled_mask.png",
         )
@@ -215,41 +193,24 @@ class ColonyMaker:
 
 def main():
     parser = argparse.ArgumentParser(description="Detect colony polygons from a mask image.")
-    parser.add_argument("--base-dir", type=Path, default=None, help="Experiment directory containing mask.png and experiment_info.json")
-    parser.add_argument("--image-path", type=Path, default=None, help="Path to the colony mask image")
-    parser.add_argument("--info-path", type=Path, default=None, help="Path to experiment_info.json")
-    parser.add_argument("--colonies-file", type=Path, default=None, help="Output path for colonies.pkl")
-    parser.add_argument("--orientation", choices=["clockwise", "horizontal"], default=None, help="Optional colony ordering")
-    parser.add_argument("--width", type=int, default=None, help="Override working width")
-    parser.add_argument("--height", type=int, default=None, help="Override working height")
+    parser.add_argument("--image-path", type=Path, required=True, help="Path to the colony mask image")
+    parser.add_argument("--colonies-file", type=Path, required=True, help="Output path for colonies.pkl")
+    parser.add_argument("--orientation", choices=["clockwise", "horizontal"], required=True, help="Colony ordering")
+    parser.add_argument("--width", type=int, required=True, help="Working width")
+    parser.add_argument("--height", type=int, required=True, help="Working height")
     parser.add_argument("--fixed-threshold", action="store_true", help="Use a fixed binary threshold instead of Otsu")
     parser.add_argument("--debug", action="store_true", help="Print extra colony details")
     args = parser.parse_args()
 
-    base_dir = args.base_dir.expanduser().resolve() if args.base_dir else None
-    image_path = args.image_path.expanduser().resolve() if args.image_path else None
-    info_path = args.info_path.expanduser().resolve() if args.info_path else None
-    colonies_file = args.colonies_file.expanduser().resolve() if args.colonies_file else None
-
-    if base_dir is not None:
-        image_path = image_path or (base_dir / "mask.png")
-        info_path = info_path or (base_dir / "experiment_info.json")
-        colonies_file = colonies_file or (base_dir / "colonies.pkl")
-
-    if image_path is None or info_path is None or colonies_file is None:
-        parser.error("Provide --base-dir or explicitly set --image-path, --info-path, and --colonies-file.")
-
-    with open(info_path, "r") as f:
-        info = json.load(f)
+    image_path = args.image_path.expanduser().resolve()
+    colonies_file = args.colonies_file.expanduser().resolve()
 
     cm = ColonyMaker(
         width=args.width,
         height=args.height,
-        orientation=args.orientation,
-        use_otsu=not args.fixed_threshold,
         debug=args.debug,
     )
-    colonies = cm.detect_colonies(str(image_path), info, args.orientation)
+    colonies = cm.detect_colonies(str(image_path), args.orientation, not args.fixed_threshold)
     cm.save_colonies(colonies, colonies_file)
     print(f"Detected and saved {len(colonies)} colonies to {colonies_file}")
 

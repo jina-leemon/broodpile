@@ -1,5 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
 
-/bin/python3 "/home/tracking/Dropbox (Dropbox @RU)/Jina_shared/scripts/broodpile/combine_jsonl_with_colonies_broodpile.py" /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264048/filter_predictions/  /media/AntGate/user/shared/Patrick_broodpile/20250917_run/colonies/colonies.pkl -o /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264048/combine_final
-/bin/python3 "/home/tracking/Dropbox (Dropbox @RU)/Jina_shared/scripts/broodpile/combine_jsonl_with_colonies_broodpile.py" /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264049/filter_predictions/ "/home/tracking/Dropbox (Dropbox @RU)/Jina_shared/shared/Patrick_broodpile/20250917_run/colonies/colonies.pkl" -o /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264049/combine_final
-/bin/python3 "/home/tracking/Dropbox (Dropbox @RU)/Jina_shared/scripts/broodpile/combine_jsonl_with_colonies_broodpile.py" /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264052/filter_predictions/  /media/AntGate/user/shared/Patrick_broodpile/20250917_run/colonies/colonies.pkl -o /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264052/combine_final
-/bin/python3 "/home/tracking/Dropbox (Dropbox @RU)/Jina_shared/scripts/broodpile/combine_jsonl_with_colonies_broodpile.py" /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264057/filter_predictions/  /media/AntGate/user/shared/Patrick_broodpile/20250917_run/colonies/colonies.pkl -o /media/AntGate/user/patrick/shared/broodpile_analysis/patrick_oct17_alexa647_20241017_162401.40264057/combine_final
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ $# -lt 4 ]]; then
+    echo "Usage: $0 <filtered_jsonl_dir> <colonies.pkl> -o <output_dir> [combine_segmentation_colony.py args...]" >&2
+    exit 1
+fi
+
+exec /bin/python3 "$script_dir/combine_segmentation_colony.py" "$@"

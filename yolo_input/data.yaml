@@ -1,4 +1,0 @@
-train: /yolo_input/train/images # Directory with training images
-val:   /yolo_input/val/images   # Directory with validation images
-nc:    1
-names: ['brood']

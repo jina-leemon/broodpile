@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-model=../shared/Patrick_broodpile/20250917_run/runs/segment/train/weights/best.pt 
-out_dir=../shared/Patrick_broodpile/20250917_run/model_predictions/patrick_oct17_alexa647_20241017_162401.40264048/
-root=/media/AntGate/user/patrick/shared/patrick_oct17_alexa647_20241017_162401.40264048/
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+model="$1"
+input_dir="$2"
+out_dir="$3"
+jobs="$4"
+overlay_dir="$5"
+gpu_count="$(nvidia-smi --list-gpus | wc -l)"
 
-log_path="$(realpath "$(dirname "$0")/yolo_export_$(date +'%Y%m%d_%H%M%S').log")"
+mapfile -t inputs < <(find "$input_dir" -maxdepth 1 -type f -name '*.mp4' ! -name '._*' | sort)
 
-nohup bash -lc "
-python3 - <<'PY' | parallel -j10 -u '/bin/python3 \"/home/tracking/Dropbox (Dropbox @RU)/Jina_shared/scripts/ethogram/yolo_export_segmentation_tqdm.py\" \"'$model'\" {} \"'$out_dir'\"'
-from pathlib import Path
-root = Path(\"$root\")
-for mp4 in sorted(root.glob('*.mp4')):
-    print(mp4)
-    stem = mp4.stem
-PY
-" >"$log_path" 2>&1 &
+run_one() {
+    local video_path="$1"
+    local device="$2"
+    PYTHONUNBUFFERED=1 /bin/python3 "$script_dir/yolo_segment.py" "$model" "$video_path" "$out_dir" "$overlay_dir" "$device"
+}
 
-pid=$!
-echo "Started export job (PID: $pid); logs: $log_path"
-
-## pkill -f yolo_export_segmentation_copy.py
+export script_dir model out_dir overlay_dir gpu_count
+export -f run_one
+parallel --lb -j "$jobs" 'run_one "$1" "$(( ($2 - 1) % gpu_count ))"' _ {} {%} ::: "${inputs[@]}"
