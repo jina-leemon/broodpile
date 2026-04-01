@@ -11,7 +11,12 @@ from shapely.geometry import Polygon
 import yaml, cv2
 import concurrent.futures
 from tqdm import tqdm
-from ethogram_vis_functions import build_polygon, iou_polygons
+
+__all__ = [
+    "read_config",
+    "filter_one_file",
+    "filter_all_files",
+]
 
 # ----------------------------
 # Config & FS
@@ -30,6 +35,32 @@ def ensure_dir(p: Path):
 # ----------------------------
 # Geometry helpers
 # ----------------------------
+
+def build_polygon(points) -> Polygon:
+    if not isinstance(points, list) or len(points) < 3:
+        raise ValueError("Polygon must contain at least 3 points")
+    poly = Polygon(points)
+    if poly.is_empty:
+        raise ValueError("Polygon is empty")
+    if not poly.is_valid:
+        poly = poly.buffer(0)
+    if poly.is_empty:
+        raise ValueError("Polygon could not be repaired")
+    return poly
+
+
+def iou_polygons(pa: Polygon, pb: Polygon) -> float:
+    if pa is None or pb is None or pa.is_empty or pb.is_empty:
+        return 0.0
+    try:
+        inter_area = pa.intersection(pb).area
+        union_area = pa.union(pb).area
+    except Exception:
+        return 0.0
+    if union_area <= 0:
+        return 0.0
+    return float(inter_area / union_area)
+
 
 def build_overlap_groups_polys(polys: list[Polygon], iou_thresh: float, contain_frac: float = 0.5) -> list[list[int]]:
     n = len(polys)
@@ -50,7 +81,6 @@ def build_overlap_groups_polys(polys: list[Polygon], iou_thresh: float, contain_
                 if visited[j] or j == a:
                     continue
                 pb = polys[j]
-                # Treat containment as overlap: if intersection covers a large fraction of the smaller polygon
                 try:
                     inter_area = pa.intersection(pb).area
                 except Exception:
@@ -64,8 +94,8 @@ def build_overlap_groups_polys(polys: list[Polygon], iou_thresh: float, contain_
         groups.append(comp)
     return groups
 
+
 def merge_polygons(polys: list[Polygon]) -> Polygon | None:
-    """Merge a list of polygons using union. Return the largest bounding merged result."""
     if not polys:
         return None
     if len(polys) == 1:
@@ -80,31 +110,29 @@ def merge_polygons(polys: list[Polygon]) -> Polygon | None:
 # ----------------------------
 
 def get_conf_threshold(cfg: dict) -> float:
-    if "class_thresholds" in cfg:
-        thr_map = cfg["class_thresholds"]
-        if not isinstance(thr_map, dict) or not thr_map:
-            raise ValueError("class_thresholds must be a non-empty mapping")
-        return float(next(iter(thr_map.values())))
     if "conf_threshold" in cfg:
         return float(cfg["conf_threshold"])
-    raise ValueError("Config must define either class_thresholds or conf_threshold")
+    raise ValueError("Config must define conf_threshold")
+
+def get_final_conf_threshold(cfg: dict) -> float:
+    if "final_conf_threshold" in cfg:
+        return float(cfg["final_conf_threshold"])
+    raise ValueError("Config must define final_conf_threshold")
 
 # ----------------------------
 # IO helpers
 # ----------------------------
 
-def is_jsonl_gz_path(path: Path) -> bool:
-    return path.name.endswith(".jsonl.gz")
-
-
 def iter_jsonl(path: Path) -> Iterable[dict]:
-    if not is_jsonl_gz_path(path):
-        raise ValueError(f"Expected .jsonl.gz input, got {path}")
-    with gzip.open(path, "rt", encoding="utf-8") as f:
-        for line in f:
-            s = line.strip()
-            if s:
-                yield json.loads(s)
+    try:
+        with gzip.open(path, "rt", encoding="utf-8") as f:
+            for line in f:
+                s = line.strip()
+                if s:
+                    yield json.loads(s)
+    except OSError as exc:
+        print(f"[WARN] Skipping unreadable gzip file {path}: {exc}")
+        return
 
 def write_jsonl_gz(path: Path, records: Iterable[dict]):
     with gzip.open(path, "wt", encoding="utf-8") as f:
@@ -112,8 +140,6 @@ def write_jsonl_gz(path: Path, records: Iterable[dict]):
             f.write(json.dumps(rec, separators=(",", ":")) + "\n")
 
 def filtered_out_name(p: Path) -> str:
-    if not is_jsonl_gz_path(p):
-        raise ValueError(f"Expected .jsonl.gz input, got {p}")
     base = p.name[: -len(".jsonl.gz")]
     return f"{base}.filtered.jsonl.gz"
 
@@ -124,9 +150,8 @@ def filtered_out_name(p: Path) -> str:
 def filter_one_file(in_path: Path, out_path: Path, cfg: dict):
     iou_thr = float(cfg["iou_threshold"])
     conf_thr = get_conf_threshold(cfg)
+    final_conf_thr = get_final_conf_threshold(cfg)
     contain_frac = float(cfg["containment_fraction"])
-    if not is_jsonl_gz_path(in_path):
-        raise ValueError(f"Expected .jsonl.gz input, got {in_path}")
 
     out_records = []
 
@@ -172,7 +197,14 @@ def filter_one_file(in_path: Path, out_path: Path, cfg: dict):
                     kept_conf.append(float(largest_conf))
                     kept_polys_merged.append(merged_poly)
 
-        kept_sorted = sorted(zip(kept_global_idx, kept_conf, kept_polys_merged), key=lambda x: x[0])
+        kept_sorted = sorted(
+            (
+                (idx, conf, poly)
+                for idx, conf, poly in zip(kept_global_idx, kept_conf, kept_polys_merged)
+                if float(conf) >= final_conf_thr
+            ),
+            key=lambda x: x[0],
+        )
         out_class_ids = [cids[i] for i, _, _ in kept_sorted]
         out_confs    = [conf for _, conf, _ in kept_sorted]
         # Convert merged Shapely polygons back to xy coordinates
@@ -201,6 +233,40 @@ def filter_one_file(in_path: Path, out_path: Path, cfg: dict):
 
     ensure_dir(Path(cfg["paths"]["output_dir"]))
     write_jsonl_gz(out_path, out_records)
+
+
+def filter_all_files(files: list[Path], out_dir: Path, cfg: dict):
+    ensure_dir(out_dir)
+
+    if not files:
+        print(f"[WARN] No JSONL files to filter into {out_dir}")
+        return
+
+    parallel_cfg = cfg.get("parallel", {})
+    parallel_enabled = bool(parallel_cfg.get("enabled", False))
+    max_workers = int(parallel_cfg.get("workers", 1))
+
+    if parallel_enabled and max_workers > 1 and len(files) > 1:
+        print(f"[INFO] Running filtering in parallel with {max_workers} workers")
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as ex:
+            fut_to_path = {
+                ex.submit(filter_one_file, p, out_dir / filtered_out_name(p), cfg): p
+                for p in files
+            }
+            for fut in tqdm(
+                concurrent.futures.as_completed(fut_to_path),
+                total=len(fut_to_path),
+                desc="Filtering all videos (parallel)",
+            ):
+                p = fut_to_path[fut]
+                try:
+                    fut.result()
+                except Exception as e:
+                    print(f"[ERROR] Processing {p} failed: {e}")
+    else:
+        for p in tqdm(files, desc="Filtering all videos"):
+            out_path = out_dir / filtered_out_name(p)
+            filter_one_file(p, out_path, cfg)
 
 # ----------------------------
 # Entry point
@@ -245,29 +311,7 @@ def main():
         print(f"[WARN] No JSONL files in {in_dir}")
         return
 
-    # Parallel execution config
-    parallel_cfg = cfg["parallel"]
-    parallel_enabled = bool(parallel_cfg["enabled"])
-    max_workers = int(parallel_cfg["workers"])
-
-    if parallel_enabled and len(files) > 1:
-        print(f"[INFO] Running filtering in parallel with {max_workers} workers")
-        # Submit tasks to worker processes. Each worker will call filter_one_file.
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as ex:
-            fut_to_path = {
-                ex.submit(filter_one_file, p, out_dir / filtered_out_name(p), cfg): p
-                for p in files
-            }
-            for fut in tqdm(concurrent.futures.as_completed(fut_to_path), total=len(fut_to_path), desc="Filtering all videos (parallel)"):
-                p = fut_to_path[fut]
-                try:
-                    fut.result()
-                except Exception as e:
-                    print(f"[ERROR] Processing {p} failed: {e}")
-    else:
-        for p in tqdm(files, desc="Filtering all videos"):
-            out_path = out_dir / filtered_out_name(p)
-            filter_one_file(p, out_path, cfg)
+    filter_all_files(files, out_dir, cfg)
 
 if __name__ == "__main__":
     main()

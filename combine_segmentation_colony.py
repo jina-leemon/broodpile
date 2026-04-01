@@ -38,13 +38,15 @@ def load_colonies(colonies_pkl_path: Path):
 
 def iter_jsonl_with_source(jsonl_path: Path) -> Iterable[tuple[dict, int]]:
     """Iterate JSONL records with row index (0-based)."""
-    if jsonl_path.suffixes != [".jsonl", ".gz"]:
-        raise ValueError(f"Expected a .jsonl.gz file, got: {jsonl_path}")
-    with gzip.open(jsonl_path, "rt", encoding="utf-8") as f:
-        for row_idx, line in enumerate(f):
-            s = line.strip()
-            if s:
-                yield json.loads(s), row_idx
+    try:
+        with gzip.open(jsonl_path, "rt", encoding="utf-8") as f:
+            for row_idx, line in enumerate(f):
+                s = line.strip()
+                if s:
+                    yield json.loads(s), row_idx
+    except (OSError, EOFError, gzip.BadGzipFile, json.JSONDecodeError) as exc:
+        print(f"[WARN] Skipping unreadable JSONL file {jsonl_path}: {exc}")
+        return
 
 
 def point_in_mask(pt: tuple, mask: np.ndarray) -> bool:
@@ -421,10 +423,10 @@ def main():
         help="Path to colonies.pkl (output from process_colony_masks.py)"
     )
     parser.add_argument(
-        "-o", "--output_dir",
+        "-o", "--combine_dir",
         type=Path,
         required=True,
-        help="Output directory for CSVs"
+        help="Combine output directory for CSVs"
     )
     parser.add_argument("--preview", action="store_true", help="Create overlay preview videos (one per input JSONL)")
     parser.add_argument(
@@ -440,7 +442,7 @@ def main():
     
     jsonl_dir = args.jsonl_dir.expanduser().resolve()
     colonies_pkl = args.colonies_pkl.expanduser().resolve()
-    output_dir = args.output_dir.expanduser().resolve()
+    combine_dir = args.combine_dir.expanduser().resolve()
     preview = bool(args.preview)
     overlay = bool(args.overlay)
     video_dir = args.video_dir.expanduser().resolve() if args.video_dir else None
@@ -456,7 +458,7 @@ def main():
         print(f"[ERROR] colonies.pkl not found: {colonies_pkl}")
         return
     
-    output_dir.mkdir(parents=True, exist_ok=True)
+    combine_dir.mkdir(parents=True, exist_ok=True)
     if (preview or overlay) and video_dir is None:
         print("[ERROR] --video_dir is required when --preview or --overlay is enabled")
         return
@@ -478,7 +480,7 @@ def main():
     
     # Process each JSONL file, tracking cumulative frame offset
     frame_offset = 0
-    videos_preview_dir = output_dir / "videos_preview"
+    videos_preview_dir = combine_dir / "videos_preview"
     if preview:
         videos_preview_dir.mkdir(parents=True, exist_ok=True)
 
@@ -535,12 +537,12 @@ def main():
     print(f"[INFO] Writing output CSVs...")
     for colony in colonies:
         metrics = colony_metrics[colony.colony_id]
-        output_csv = output_dir / f"colony_{colony.colony_id:02d}_detections.csv"
+        output_csv = combine_dir / f"colony_{colony.colony_id:02d}_detections.csv"
         write_colony_csv(colony, metrics, output_csv)
 
     if overlay:
         metrics_index = build_metrics_index(colony_metrics)
-        videos_overlay_dir = output_dir / "videos_overlay"
+        videos_overlay_dir = combine_dir / "videos_overlay"
         videos_overlay_dir.mkdir(parents=True, exist_ok=True)
         print(f"[INFO] Writing validated overlay videos...")
         for jsonl_path in tqdm(jsonl_files, desc="Writing overlay videos"):
@@ -559,7 +561,7 @@ def main():
             )
             print(f"[INFO] Overlay video -> {overlay_path}")
     
-    print(f"[INFO] Done. Output CSVs in {output_dir}")
+    print(f"[INFO] Done. Output CSVs in {combine_dir}")
 
 
 if __name__ == "__main__":
