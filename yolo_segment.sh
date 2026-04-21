@@ -6,7 +6,7 @@ model="$1"
 input_dir="$2"
 out_dir="$3"
 jobs="$4"
-overlay_dir="$5"
+overlay_dir="${5:-}"
 gpu_count="$(nvidia-smi --list-gpus | wc -l)"
 
 mapfile -t inputs < <(find "$input_dir" -maxdepth 1 -type f -name '*.mp4' ! -name '._*' | sort)
